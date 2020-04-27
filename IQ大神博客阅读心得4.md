@@ -1,12 +1,14 @@
-IQ大神博客阅读心得4
+## IQ大神博客阅读心得4
+
+*<u>蒋孟贤，2020.05，Useful Maths</u>*
 
 | [Thinking with Quaternions](#Thinking-with-Quaternions)      | 四元树的基本知识和一些思考                               |
 | ------------------------------------------------------------ | -------------------------------------------------------- |
 | [Sphere Ambient Occlusion](#Sphere-Ambient-Occlusion)        | 球的环境光遮蔽，一个好的思路，产生的简单却有效的实验结果 |
-| [Working with Ellipses](#Working-with-Ellipses)              |                                                          |
-| [Sphere Visibility](#Sphere-Visibility)                      |                                                          |
-| [Patched Sphere](#Patched-Sphere)                            |                                                          |
-| [Fourier Series](#Fourier-Series)                            |                                                          |
+| [Working with Ellipses](#Working-with-Ellipses)              | 椭圆包围盒以及椭圆相交测试算法                           |
+| [Sphere Visibility](#Sphere-Visibility)                      | 球体的可见性                                             |
+| [Patched Sphere](#Patched-Sphere)                            | 球的UV坐标的合理计算                                     |
+| [Fourier Series](#Fourier-Series)                            | 傅里叶曲线拟合                                           |
 | [**Normal and Areas of N-sided Polygons**](#Normal-and-Areas-of-N-sided-Polygons) | **计算多边形的法向量和面积的巧妙思路和方法**             |
 | [Distance to An Ellipse](#Distance-to-An-Ellipse)            | 计算点到椭圆的距离                                       |
 | [A Sin/Cos Trick](#A-Sin/Cos-Trick)                          | 简单的三角函数讨论                                       |
@@ -16,9 +18,9 @@ IQ大神博客阅读心得4
 | [Sphere Projection](#Sphere-Projection)                      | LOD的简单方法                                            |
 | [Distance to Triangle](#Distance to Triangle)                | 3D空间中计算点到物体·的距离，但核心是我对实例的分析      |
 | [Sphere Density](#Sphere-Density)                            | 球体光的简单实现                                         |
-| [Disk and Cylinder Bounding Box](#Disk-and-Cylinder-Bounding-Box) |                                                          |
-|                                                              |                                                          |
-|                                                              |                                                          |
+| **[Disk and Cylinder Bounding Box](#Disk-and-Cylinder-Bounding-Box)** | 圆盘、圆柱、圆台的包围盒计算的一般方法                   |
+| [Inverse Smoothstep](#Inverse-Smoothstep)                    | 求立体SM的反函数                                         |
+| [Bezier Bounding Box](#Bezier-Bounding-Box)                  | 二次以及三次贝塞尔曲线包围盒的求法                       |
 |                                                              |                                                          |
 
 
@@ -110,7 +112,7 @@ cos\alpha=\frac{D\cdot cos\alpha_s-sin\alpha_s\cdot cos\varphi}{\sqrt{D^2+\lambd
 $$
 重新计算有如下结果（具体推算参见博客）
 $$
-bl(r,d=cos\alpha_s(r/d)^2
+bl(r,d)=cos\alpha_s(r/d)^2
 $$
 在ShaderToy内写的一个[小测试](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E4%BB%A3%E7%A0%81/Math/SphAO.shader)
 
@@ -1063,5 +1065,241 @@ $$
 
 
 
-#### Disk and Cylinder Bounding Box
+####  Disk and Cylinder Bounding Box
 
+计算不同几何图元的轴对齐包围盒（AABB）对于碰撞检测和渲染算法很有用。尤其是，磁盘是用于splatting and global illumination lighting algorithms，来表示远处的几何图形和点云渲染的通用图元。因此，能够计算出任意定向的磁盘的最紧密的轴向对齐边界框非常重要，特别是如果可以快速且分析地完成它而不必遍历磁盘的外围时。幸运的是，存在这样一种紧密形式的表达式。
+
+椭圆由其中心，半径和两个正交切线轴定义，[则可以精确地计算3D空间中任意定向的椭圆的边界框](#Working-with-Ellipses)，
+$$
+bbox=c_x\pm\sqrt{u_x^2+v_x^2},c_y\pm\sqrt{u_y^2+v_y^2},c_z\pm\sqrt{u_z^2+v_z^2}
+$$
+磁盘通常由单个方向矢量（或法向）定义，而不是由两个（不同大小）的轴定义。解决此问题的一种方法是坚持我们的磁盘法线，然后通过将法线与一些非平行向量互积来计算两个正交法线向量。但是，尽管这很好用，但似乎浪费了计算，并且在数学上不佳（因此不令人满意），因为似乎没有必要使用任意向量来执行确定性计算。
+
+为此，我的解决方案是首先注意将法向量与规范**i**，**j**或**k**交叉轴产生不同的一对轴和不同的数学表达式，但由于磁盘是唯一的，因此它们中的三个应落在相同的数字边界框结果上。这意味着将三个计算实际开发为三个不同的表达式并将它们组合为一个表达式仍然是有效的解决方案，但应通过仅选择三个轴之一来消除您所获得的所有不对称性。
+
+让我们看看。对于给定的磁盘方向或法线**n** =（**x**，**y**，**z**），构造与**n**相交的基向量**u**和**v**具有三个规范轴（1,0,0），（0,1,0）和（0,0,1）的结果如下：
+$$
+u_i=(1,0,0)\times(x,y,z)\space\space\space v_i=u_i\times(x,y,z)\\
+u_j=(0,1,0)\times(x,y,z)\space\space\space v_j=u_j\times(x,y,z)\\
+u_k=(0,0,1)\times(x,y,z)\space\space\space v_k=u_k\times(x,y,z)
+$$
+考虑到|n|=1，将得到以下结果：
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/Math/BBOX1.PNG)
+
+具体推导可以见博客，最终结果为
+$$
+bbox(c,r,n)=c\pm r\cdot \sqrt{1-n^2}
+$$
+
+```c#
+struct bound3
+{
+    vec3 mMin;
+    vec3 mMax;
+};
+
+// bounding box for a disk defined by cen(ter), nor(mal), rad(ius)
+bound3 DiskAABB( in vec3 cen, in vec3 nor, float rad )
+{
+    vec3 e = rad*sqrt( 1.0 - nor*nor );
+    return bound3( cen-e, cen+e );
+}
+```
+
+拓展，圆柱的包围盒
+
+<details>
+    <summary>代码</summary>
+    <pre><code>
+    bound3 CylinderAABB( in vec3 pa, in vec3 pb, in float ra )
+    {
+        vec3 a = pb - pa;
+        vec3 e = ra*sqrt( 1.0 - a*a/dot(a,a) );
+        return bound3( min( pa - e, pb - e ),
+                       max( pa + e, pb + e ) );
+    }
+    </code></pre>
+</details>
+
+圆锥体的包围盒计算
+
+<details>
+    <summary>代码</summary>
+    <pre><code>
+    bound3 ConeAABB( in vec3 pa, in vec3 pb, in float ra, in float rb )
+    {
+        vec3 a = pb - pa;
+        vec3 e = sqrt( 1.0 - a*a/dot(a,a) );
+        return bound3( min( pa - e*ra, pb - e*rb ),
+                       max( pa + e*ra, pb + e*rb ) );
+    }
+    </code></pre>
+</details>
+
+[IQ例子](https://www.shadertoy.com/view/MtcXRf)
+
+
+
+
+
+#### Inverse Smoothstep
+
+The cubic smoothstep() is simply, after remapping and clamping
+$$
+y(x)=x^2(3-2x)
+$$
+求反函数，需要求解三次方程
+
+$$
+x(y)=2x^3-3x^2+y
+$$
+[推导](http://www.iquilezles.org/www/articles/ismoothstep/ismoothstep.htm)，结果如下：
+$$
+\begin{align}
+\phi&=asin(1-2*y)\\
+x&=0.5-sin(\phi/3)
+\end{align}
+$$
+
+```c#
+float inverse_smoothstep( float y )
+{
+    return 0.5 - sin(asin(1.0-2.0*y)/3.0);
+}
+```
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/Math/InSm.PNG)
+
+<details>
+    <summary>代码</summary>
+    <pre><code>
+    float Smoothstep(float x)
+    {
+        return x*x*(3.-2.*x);
+    }
+    float InverseSmoothstep(float y)
+    {
+        return .5-sin(asin(1.-2.*y)/3.);
+    }
+    void mainImage( out vec4 fragColor, in vec2 fragCoord )
+    {
+        vec2 p=fragCoord/iResolution.y;
+        p.x=p.x-.4;
+        vec3 col=vec3(0.2)+vec3(0.02*mod(floor(5.*p.x)+floor(5.*p.y),2.));
+        vec3 c1=vec3(0.7,0.7,0.);
+        float w1=Smoothstep(p.x);
+        float step=1./iResolution.y;
+        col=mix(c1,col,smoothstep(1.*step,2.*step,abs(p.y-w1)));
+        vec3 c2=vec3(0.0,0.7,0.7);
+        float w2=InverseSmoothstep(p.x);
+        col=mix(c2,col,smoothstep(1.*step,2.*step,abs(p.y-w2)));
+        col=mix(vec3(0.6),col,smoothstep(1.*step,2.*step,abs(p.y-p.x)));
+        col=mix(vec3(0,0,0),col,smoothstep(0.,0.,p.x));
+        col=mix(vec3(0,0,0),col,smoothstep(0.,0.0,(1.-p.x)));
+        fragColor=vec4(col,1.0);
+    }
+    </code></pre>
+</details>
+
+
+
+#### Bezier Bounding Box
+
+贝塞尔曲线是计算机图形的有用图元。从头发到字体，它们几乎无处不在。快速使他们的边界盒计算机对于保持它们在空间上的组织以便快速查询或评估很重要。尽管对bbox的简单近似是微不足道的（例如计算其控制点的边界框），但在本文中，我们通过分析得出了确切的边界框。
+
+对于2次贝塞尔曲线，我们有
+$$
+p(t)=(1-t)^2p_0+2(1-t)t\cdot p_1+t^2\cdot p_2
+$$
+为了求解包围盒，我们有它的导数为0，可以获得：
+$$
+t=\frac{p_0-p_1}{p_0-2p_1+p_2}
+$$
+
+```c#
+vec4 bboxBezier(in vec2 p0, in vec2 p1, in vec2 p2 )
+{
+    vec2 mi = min(p0,p2);
+    vec2 ma = max(p0,p2);
+
+    if( p1.x<mi.x || p1.x>ma.x || p1.y<mi.y || p1.y>ma.y )
+    {
+        vec2 t = clamp((p0-p1)/(p0-2.0*p1+p2),0.0,1.0);
+        vec2 s = 1.0 - t;
+        vec2 q = s*s*p0 + 2.0*s*t*p1 + t*t*p2;
+        mi = min(mi,q);
+        ma = max(ma,q);
+    }
+    
+    return vec4( mi, ma );
+}
+
+```
+
+对于三次贝塞尔曲线，过程和上面相同
+$$
+\begin{align}
+t&=\frac{-b\pm \sqrt{b^2-ac}}{a}\\
+a&=-p_0+3p_1-3p_2+p_3
+\\
+b&=p_0-2p_1+p_2\\
+c&=-p_0+p_1
+\end{align}
+$$
+
+<details>
+    <summary>代码</summary>
+    <pre><code>
+   vec4 bboxBezier(in vec2 p0, in vec2 p1, in vec2 p2, in vec3 p3 )
+    {
+        vec2 mi = min(p0,p3);
+        vec2 ma = max(p0,p3);
+        vec2 c = -1.0*p0 + 1.0*p1;
+        vec2 b =  1.0*p0 - 2.0*p1 + 1.0*p2;
+        vec2 a = -1.0*p0 + 3.0*p1 - 3.0*p2 + 1.0*p3;
+        vec2 h = b*b - a*c;
+        if( h.x > 0.0 )
+        {
+            h.x = sqrt(h.x);
+            float t = (-b.x - h.x)/a.x;
+            if( t>0.0 && t<1.0 )
+            {
+                float s = 1.0-t;
+                float q = s*s*s*p0.x + 3.0*s*s*t*p1.x + 3.0*s*t*t*p2.x + t*t*t*p3.x;
+                mi.x = min(mi.x,q);
+                ma.x = max(ma.x,q);
+            }
+            t = (-b.x + h.x)/a.x;
+            if( t>0.0 && t<1.0 )
+            {
+                float s = 1.0-t;
+                float q = s*s*s*p0.x + 3.0*s*s*t*p1.x + 3.0*s*t*t*p2.x + t*t*t*p3.x;
+                mi.x = min(mi.x,q);
+                ma.x = max(ma.x,q);
+            }
+        }
+        if( h.y>0.0 )
+        {
+            h.y = sqrt(h.y);
+            float t = (-b.y - h.y)/a.y;
+            if( t>0.0 && t<1.0 )
+            {
+                float s = 1.0-t;
+                float q = s*s*s*p0.y + 3.0*s*s*t*p1.y + 3.0*s*t*t*p2.y + t*t*t*p3.y;
+                mi.y = min(mi.y,q);
+                ma.y = max(ma.y,q);
+            }
+            t = (-b.y + h.y)/a.y;
+            if( t>0.0 && t<1.0 )
+            {
+                float s = 1.0-t;
+                float q = s*s*s*p0.y + 3.0*s*s*t*p1.y + 3.0*s*t*t*p2.y + t*t*t*p3.y;
+                mi.y = min(mi.y,q);
+                ma.y = max(ma.y,q);
+            }
+        }
+        return vec4( mi, ma );
+    }
+    </code></pre>
+</details>
