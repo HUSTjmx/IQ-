@@ -4,9 +4,9 @@
 | ------------------------------------------------------------ | -------------------------- |
 | [SSAO](#SSAO)                                                | 简单的屏幕空间环境光遮蔽   |
 | [**Better Fog**](#Better-Fog)                                | **关于雾的计算的诸多效果** |
-| [Penumbra Shadows In Raymarched SDFS](#Penumbra-Shadows-In-Raymarched-SDFS) |                            |
-|                                                              |                            |
-|                                                              |                            |
+| [Penumbra Shadows In Raymarched SDFS](#Penumbra-Shadows-In-Raymarched-SDFS) | 距离场中软阴影的计算技巧   |
+| [Simple Pathtracing](#Simple-Pathtracing)                    |                            |
+| [Multiresolution Ambient occlusion](#Multiresolution-Ambient-occlusion) |                            |
 |                                                              |                            |
 |                                                              |                            |
 |                                                              |                            |
@@ -156,9 +156,261 @@ vec3 applyFog( in vec3  rgb,      // original color of the pixel
 
 ![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/fog4.jpg)
 
+结合下一节的软阴影，我们的测试例子如下
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/Shadow%2Bfog.gif)
+
+
+
 
 
 
 
 #### Penumbra Shadows In Raymarched SDFS
+
+[距离场](http://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm) 的众多优势之一，是他们自然地提供了全球信息。这意味着在为点着色时，只需查询Distanve函数即可轻松浏览周围的几何图形。与经典的光栅化器（基于REYES或基于scaline）不同，在传统光栅化器中，必须以某种方式烘焙全局数据，作为后续消费（在阴影图，深度图，点云...中）或在必须查找全局信息的raytracer中进行预处理。通过光线投射对几何图形进行采样，可以在远距离场中着色时使用该信息，这些信息几乎是免费的（当然，“免费”中有很多引号）。这意味着许多更现实的阴影和照明技术很容易在距离场上实现。当使用光线发射器对距离场进行采样/渲染时，更是如此。
+
+我们假设这个map()函数包含您要呈现的所有对象，并且允许所有对象在所有其他对象中投射阴影。然后，在一个阴影点计算阴影信息的简单方法，是沿着光矢量射线行进，从光到阴影点的距离是多少，直到找到一个交点。你可以这样做一些代码：
+
+```c#
+float shadow( in vec3 ro, in vec3 rd, float mint, float maxt )
+{
+    for( float t=mint; t<maxt; )
+    {
+        float h = map(ro + rd*t);
+        if( h<0.001 )
+            return 0.0;
+        t += h;
+    }
+    return 1.0;
+}
+```
+
+这段代码工作得非常漂亮，并产生了漂亮而准确的锐利阴影
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/Shadow1.png)
+
+现在，我们只能添加一行代码，并使它看起来更好！诀窍是想想当阴影射线没有击中任何物体，而恰好击中任何物体时会发生什么。然后，也许您想指出的是您在半影之下的阴影。可能，最接近您的目标是击中某个物体，而您想使其变暗。另外，距离您的阴影点最近的一次发生的颜色也更深。好吧，碰巧当我们对阴影射线进行射线编影时，这两个距离对我们都可用！当然他在上面的代码中第一个是**h**，第二个是**t**。因此，我们可以简单地为行进过程中的每个步骤计算一个半影因子，并采用所有半影中最暗的一个。在2019年，一些Shadertoy用户注意到，还可以将阴影计算偏移和偏移一半，以获取内部半影。最终代码如下所示：
+
+```c#
+float softshadow( in vec3 ro, in vec3 rd, float mint, float maxt, float w )
+{
+    float s = 1.0;
+    for( float t=mint; t<maxt; )
+    {
+        float h = map(ro + rd*t);
+        s = min( s, 0.5+0.5*h/(w*t) );
+        if( s<0.0 ) break;
+        t += h;
+    }
+    s = max(s,0.0);
+    return s*s*(3.0-2.0*s); // smoothstep
+}
+```
+
+参数**w**是光源的大小，并控制阴影的强度。为使该算法稳定，我们应该沿射线精细地寻找半影。但是，由于我们在前进，因此我们很可能错过沿射线产生最暗半影的点。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/gfx14.png)
+
+设y为当前点(绿色)到射线上最近点的距离(黄色)，d为当前点到估计最近距离的距离(上图中黄线长度的一半)。然后，计算这两个量的代码非常简单:
+
+```c#
+float y = r2*r2/(2.0*r1);
+float d = sqrt(r2*r2-y*y);
+```
+
+其中r1和r2是红色和绿色球体的半径，换句话说，就是SDFs在之前和当前raymarch点处的求值。从这两个量，我们可以通过做以下事情来改进我们的半影估计:
+
+```c#
+float softshadow( in vec3 ro, in vec3 rd, float mint, float maxt, float k )
+{
+    float res = 1.0;
+    float ph = 1e20;
+    for( float t=mint; t<maxt; )
+    {
+        float h = map(ro + rd*t);
+        if( h<0.001 )
+            return 0.0;
+        float y = h*h/(2.0*ph);
+        float d = sqrt(h*h-y*y)
+        res = min( res, k*d/max(0.0,t-y) );
+        ph = h;
+        t += h;
+    }
+    return res;
+}
+```
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/Shadow2.PNG)
+
+[代码](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E4%BB%A3%E7%A0%81/lighting/Shadow.shader)
+
+
+
+
+
+#### Simple Pathtracing
+
+编写全局照明渲染器需要一个小时。从头开始。编写*高效且通用的*全局照明渲染器需要十年。当以狂热爱好者而不是专业人士的身份进行计算机图形处理时，可以从实现中删除“高效”和“一般”方面。这意味着您确实可以在一小时内编写完整的全局照明渲染器。同样，鉴于当今硬件的强大功能，即使您不进行任何巧妙的优化或算法，全局照明系统也可以在几秒钟甚至实时的时间内进行渲染。
+
+首先，我们需要
+
+```c#
+vec2  worldIntersect( in vec3 ro, in vec3 rd, in float maxlen );
+float worldShadow(    in vec3 ro, in vec3 rd, in float maxlen );
+```
+
+worldIntersect函数以距离和对象ID的形式返回；worldShadow返回任何交集的存在（或者，如果没有交集，则返回1.0，如果有交集，则返回0.0）。这些功能的实现取决于应用程序的上下文。
+
+```c#
+vec3 worldGetNormal( in vec3 po, in float objectID );
+vec3 worldGetColor( in vec3 po, in vec3 no, in float objectID );
+vec3 worldGetBackground( in vec3 rd );
+```
+
+前两个函数返回3D场景中给定曲面点处的法线和表面颜色，第三个函数返回背景/天空色。
+
+```c#
+void worldMoveObjects（in float ctime）; 
+mat4x3 worldMoveCamera（in float ctime）;
+```
+
+这两个功能可在场景中移动对象并在给定的动画时间内定位摄像机。
+
+```c#
+vec3 worldApplyLighting( in vec3 pos, in vec3 nor );
+```
+
+此函数计算3D场景表面上给定点和法线的直接照明。
+
+*经典的直接光照模型*
+
+```c#
+vec3 calcPixelColor( in vec2 pixel, in vec2 resolution, in float frameTime )
+{
+    // screen coords
+    vec2 p = (-resolution + 2.0*pixel) / resolution.y;
+
+    // move objects
+    worldMoveObjects( frameTime );
+
+    // get camera position, and right/up/front axis
+    vec3 (ro, uu, vv, ww) = worldMoveCamera( frameTime );
+
+    // create ray
+    vec3 rd = normalize( p.x*uu + p.y*vv + 2.5*ww );
+
+    // calc pixel color
+    vec3 col = rendererCalculateColor( ro, rd );
+
+    // apply gamma correction
+    col = pow( col, 0.45 );
+
+    return col;
+}
+```
+
+```c#
+vec3 rendererCalculateColor( vec3 ro, vec3 rd )
+{
+    // intersect scene
+    vec2 tres = worldIntersect( ro, rd, 1000.0 );
+
+    // if nothing found, return background color
+    if( tres.y < 0.0 )
+       return worldGetBackground( rd );
+
+    // get position and normal at the intersection point
+    vec3 pos = ro + rd * tres.x;
+    vec3 nor = worldGetNormal( pos, tres.y );
+
+    // get color for the surface
+    vec3 scol = worldGetColor( pos, nor, tres.y );
+
+    // compute direct lighting
+    vec3 dcol = worldApplyLighting( pos, nor );
+
+    // surface * lighting
+    vec3 tcol = scol * dcol;
+
+    return tcol;
+}
+```
+
+实际上，这是常规的直接照明渲染器。
+
+==蒙特卡洛路径追踪器==
+
+
+
+
+
+#### Multiresolution Ambient occlusion
+
+总的来说，在业余爱好者中最流行的技术是SSAO，因为它根本不需要繁琐的烘焙工具开发，而只需一个带有几行代码的简单像素着色器。在我看来，它也是最容易滥用且可能应用错误的效果（紧随其后的是Blooming）
+
+除了光晕和性能外，限制SSAO可用性的主要问题是该技术产生可解释为遮挡的结果的距离范围。实际上，由于缺乏第二和第三深度层来进行采样，因此高邻采样内核不仅昂贵，而且实际上不能很好地表示遮挡。同时，如果内核太小，则遮挡的错觉也消失了，剩下的只是一个丑陋的边缘增强器，这给了它所有可怕的卡通阴影效果。因此，似乎传统的SSAO仅是解决中频遮挡的最佳选择，而大/小尺寸遮挡（低频/高频）还需要其他解决方案。
+
+在本文中，我们将看到一种解决一种特定类型场景的三种遮挡的方法
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/SSAO1.PNG)
+
+==**Medium frequency ambient occlusion**==
+
+```c#
+uniform vec3       unKernel[16];
+uniform sampler2D  unTexZ;
+uniform sampler2D  unTexN;
+uniform sampler2D  unTexR;
+
+float ssao( in vec2 pixel )
+{
+    vec2  uv  = pixel*0.5 + 0.5;
+    float z   = texture2D( unTexZ, uv ).x;      // read eye linear z
+    vec3  nor = texture2D( unTexN, uv ).xyz;    // read normal
+    vec3  ref = texture2D( unTexD, uv ).xyz;    // read dithering vector
+
+    // accumulate occlusion
+    float bl = 0.0;
+    for( int i=0; i<16; i++ )
+    {
+        vec3  of = orientate( reflect( unKernel[i], ref ), nor );
+        float sz = texture2D( unTexZ, uv+0.03*of.xy).x;
+        float zd = (sz-z)*0.2;
+        bl += clamp(zd*10.0,0.1,1.0)*(1.0-clamp((zd-1.0)/5.0,0.0,1.0));
+    }
+
+    return 1.0 - 1.0*bl/16.0;
+}
+```
+
+使用的是已知的最旧的SSAO（具有通常的基于反射的抖动）以及基于法线的样本方向（这将更好地利用样本，并将法线贴图的细节引入到遮挡信号中）。如果其输入点与法线的乘积为负，则*orientate（）*函数将其翻转。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/B-SSAO.jpg)
+
+**==High frequency ambient occlusion==**
+
+High frequency occlusion, in this scene I'm dealing with and in many others, can be regarded as the occlusion an object casts on itself. That means that the occlusion signal can probably come from the model itself, either in form of backed information or with a procedural description.（高频遮挡可以看做物体投射到自己身上，这意味着遮挡可能来自物体自身）
+
+在自然的情况下，对遮挡的过程描述很有意义。种植草，灌木，树干，树枝或冠层的相同程序方法也可以负责产生与程序生成的几何形状相匹配的遮挡信号。换句话说，由于代码/过程生成了几何图形，因此它知道该几何图形（例如它在哪里，它有多大），因此它可以产生合理的遮挡信息。
+
+例如，当为树冠生成叶子时，树冠内部的叶子可能比外面的叶子更暗（这是一种非常简单的方法，但它显示了这一概念）。在程序上生长草的代码可以使着色器叶片变暗或变亮，这取决于它们相对于它们所属的丛的相对位置。程序树的树干在分支数量较高的区域可能会变暗，等等。
+
+当然，我们的想法是不要烘焙我们可以通过程序完成的所有遮挡。有时候，过于聪明，程序化地生成或烘烤尽可能多的遮挡是很诱人的，但是我们不想这样做，因为这样做的目的是使遮挡实时且尽可能自动地作为照明解决方案的一部分。因此，我们只想生成/烘焙中频实时环境光遮挡（在我们的情况下为SSAO）无法捕获的光遮挡。
+
+中加高频SSAO结果如下
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/B%2BHSSAO.jpg)
+
+**==Low frequency ambient occlusion==**
+
+这是来自对象太远而无法被SSAO捕获的遮挡。One could bake the information in low resolution lightmaps, but instead, game/demo specific tricks can be used which are cheaper, don't require tools or an export pipeline, and can be realtime.（可以烘焙低分辨率的光照贴图信息，此外，游戏中的特定技巧更加便宜，不需要额外的工具或管道，而且实时）
+
+我们有一个户外场景，因此我们基本上希望看到的是树木和大石块在它们周围和下方的遮挡。轻松获得类似效果的一种方法是渲染具有垂直方向的阴影图，以捕获所有树木和岩石，然后进行超级模糊/ lp过滤的查找。这种工作会使树木下面的区域变暗，并使附近的物体有些暗黑。
+
+可能还可以另外渲染三个模糊的阴影贴图，分别旋转120度方位角和45度高度，并更好地近似于低频环境光遮挡。但是请记住，完美的环境光遮挡无论如何也无法获得良好的图像，它本身仍然是一个缺陷，与适当的光线传播相去甚远。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/F-SSAO.jpg)
+
+[原文](http://www.iquilezles.org/www/articles/multiresaocc/multiresaocc.htm)
 
