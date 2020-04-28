@@ -1,17 +1,17 @@
 ## IQ大神博客阅读心得5
 
-| 标题                                                         | 简介                       |
-| ------------------------------------------------------------ | -------------------------- |
-| [SSAO](#SSAO)                                                | 简单的屏幕空间环境光遮蔽   |
-| [**Better Fog**](#Better-Fog)                                | **关于雾的计算的诸多效果** |
-| [Penumbra Shadows In Raymarched SDFS](#Penumbra-Shadows-In-Raymarched-SDFS) | 距离场中软阴影的计算技巧   |
-| [Simple Pathtracing](#Simple-Pathtracing)                    |                            |
-| [Multiresolution Ambient occlusion](#Multiresolution-Ambient-occlusion) |                            |
-|                                                              |                            |
-|                                                              |                            |
-|                                                              |                            |
-|                                                              |                            |
-|                                                              |                            |
+| 标题                                                         | 简介                                         |
+| ------------------------------------------------------------ | -------------------------------------------- |
+| [SSAO](#SSAO)                                                | 简单的屏幕空间环境光遮蔽                     |
+| [**Better Fog**](#Better-Fog)                                | **关于雾的计算的诸多效果**                   |
+| [Penumbra Shadows In Raymarched SDFS](#Penumbra-Shadows-In-Raymarched-SDFS) | 距离场中软阴影的计算技巧                     |
+| [Simple Pathtracing](#Simple-Pathtracing)                    | 简单的路径追踪                               |
+| [Multiresolution Ambient occlusion](#Multiresolution-Ambient-occlusion) | 在传统的SSAO（中频）的基础上加上高频和低频AO |
+| [Outdoors Lighting](#Outdoors Lighting)                      |                                              |
+|                                                              |                                              |
+|                                                              |                                              |
+|                                                              |                                              |
+|                                                              |                                              |
 
 ------
 
@@ -413,4 +413,86 @@ High frequency occlusion, in this scene I'm dealing with and in many others, can
 ![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/F-SSAO.jpg)
 
 [原文](http://www.iquilezles.org/www/articles/multiresaocc/multiresaocc.htm)
+
+
+
+
+
+#### Outdoors Lighting
+
+这些情况下，有时可以通过巧妙地使用灯光来获得令人信服的图像，尤其是在大景观的户外照明中，间接照明的贡献适度且可预测。
+
+本文介绍了在对景观进行此类小型计算机图形实验时使用的照明设备。它基本上由3或4个定向光，一个阴影，一些（伪造或屏幕空间）环境光遮挡和一个雾层组成。如果平衡得当，这几个元素往往表现良好，甚至看起来像是逼真的照片。
+
+==The color space==
+
+在开始进行任何照明和着色工作之前，最主要的事情是确保您在线性的颜色/照明空间中工作。这意味着您将像往常一样进行亮度，阴影和颜色数学运算，但是您确实也应用了伽玛曲线
+
+```c#
+color = pow( color, vec3(1.0/2.2) );
+```
+
+==Materials==
+
+在不深入了解物理上正确的镜面反射BRDF或其他任何细节的情况下，仅将焦点放在漫反射组件上，请确保漫反射颜色为0.2左右，并且除了非常特殊的情况以外，没有其他颜色更亮。
+
+如果您在没有gamma或任何其他内容的原始框架中工作，则可能会想将材料值和颜色视为它们将在屏幕中显示的最终颜色的代表。这种输出驱动的方法比任何方法都会给您带来更多的麻烦，因为材料的颜色/强度/值仅代表它们反射的光量。因此，将材质/纹理/颜色保持在0.2的范围内，如果需要在屏幕上使对象更亮，那么您想要做的就是使灯光更强烈，不是材料。
+
+==First light==
+
+根据照片是在阳光下还是在阴影下，通过调整关键光或填充光，可能更容易找到你想要的效果。如果你已经实现了自动曝光（automatic exposure）/色调映射，那么这并不重要，只要这些值之间的关系是正确的。在我的例子中，我在这个小渲染实验中没有使用色调映射，而且我通常发现在阴影下的图像更漂亮。
+
+这里的第一个灯，例子中是太阳
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/gfx03.jpg)
+
+关于阴影，有一个很棒的技巧，可以很好地发挥作用，并有助于创建美丽的日落或日出场景——就是将阴影的半影着色并过度饱和为某种红色或橙色。您可以通过将半影标量信号增强为一种颜色：
+
+```c#
+//计算柔和阴影 
+float shadow = doGreatSoftShadow（pos，sunDir）;
+//为半影着色 
+vec3 cshadow = pow（vec3（shadow），vec3（1.0，1.2，1.5））;
+```
+
+另一个非常重要的技巧是避免对关键灯使用（环境）遮挡。
+
+==Second light==
+
+我们必须考虑的第二个光源是天空本身。当然，它的颜色将是蓝色的，与关键灯相比不是很亮。值为0.2可以正常工作。
+
+从理论上讲，我们应该在半球的阴影点发射几条射线，并与它们一起收集visible_times_skycolor。但是，由于这可能非常昂贵，因此在许多情况下，对我来说，一个很好的折衷办法是用垂直方向垂直落在设备上的单个定向光替换天穹。如果需要创建夕阳的天空照明，则可以根据入射角为光着色。
+
+==Third light==
+
+The last light of our rig is used to implement indirect lighitng, without doing global illumination. Since the main soure of indirect light is the bounce of the sun light into the scene itself being reflected back in the oposite direction it was coming from (in overall), we can simply put a third and last directional light coming from aproximately the oposite direction of the sun. This light we will make it horizontal, so we are basically making copying the two horizontal coordinates of the sun direction and negating them, and leaving the vertical dimension to zero.
+
+```c#
+// compute materials
+vec3 material = doFantasticMaterialColor( pos, nor );
+
+// lighting terms
+float occ = doGorgeousOcclusion( pos, nor );
+float sha = doGreatSoftShadow( pos, sunDir );
+float sun = clamp( dot( nor, sunDir ), 0.0, 1.0 );
+float sky = clamp( 0.5 + 0.5*nor.y, 0.0 1.0 );
+float ind = clamp( dot( nor, normalize(sunDir*vec3(-1.0,0.0,-1.0)) ), 0.0, 1.0 );
+
+// compute lighting
+vec3 lin  = sun*vec3(1.64,1.27,0.99)*pow(vec3(sha),vec3(1.0,1.2,1.5));
+        lin += sky*vec3(0.16,0.20,0.28)*occ;
+        lin += ind*vec3(0.40,0.28,0.20)*occ;
+
+// multiply lighting and materials
+vec3 color = material * lin;
+
+// apply fog
+color = doWonderfullFog( color, pos );
+
+// gamma correction
+color = pow( color, vec3(1.0/2.2) );
+
+// display
+displayColor = color;
+```
 
