@@ -9,9 +9,9 @@
 | [Multiresolution Ambient occlusion](#Multiresolution-Ambient-occlusion) | 在传统的SSAO（中频）的基础上加上高频和低频AO |
 | [Outdoors Lighting](#Outdoors Lighting)                      | 室外大场景的渲染技巧与思路                   |
 | [Box Occlusion](#Box-Occlusion)                              | 正方体遮蔽                                   |
-| [Terrain Raymarching](#Terrain-Raymarching)                  |                                              |
-|                                                              |                                              |
-|                                                              |                                              |
+| [Terrain Raymarching](#Terrain-Raymarching)                  | 地形的射线步进                               |
+| [Volumetric Sort](#Volumetric-Sort)                          | 体积排序（没看懂）                           |
+| [Smooth Minimum](#Smooth-Minimum)                            | 平滑最小值，用于RayMarching                  |
 
 ------
 
@@ -743,3 +743,167 @@ getShading（）函数可能需要根据模拟太阳的强大黄色偏光和模�
 
 要获取表面材料，通常是山的海拔高度和坡度以及点**p**被考虑在内。例如，在高海拔地区，您可以返回白色，而在低海拔地区，则可以返回棕色或灰色。可以使用一些*smoothstep（）*函数再次控制过渡。只需记住将所有参数随机化（使用佩林噪声），这样过渡就不会恒定，因此看起来更自然。考虑到地形的坡度也是一个好主意，因为雪和草通常只停留在平坦的表面上。因此，如果法线非常水平（即**ny**小），则最好将其与一些灰色或棕色混合，以去除雪或草。这使纹理自然适合地形，并且图像变得更丰富。
 
+
+
+
+
+#### Volumetric Sort
+
+假设您有一组要进行Alpha混合的对象。假设这些对象的位置是恒定的。并假设所有对象都沿着2d或3d网格放置。然后，您可以非常容易地以几乎为零的性能成本对这些对象进行排序，并且本文将向您说明如何进行。
+
+==In 2D==
+
+我们首先考虑2D问题。假设您有一个像下面这样的对象网格。现在，假设您正在从图中橙色箭头指示的角度查看此对象网格。现在，尝试同意以下事实：在这种情况下，您可以从**a**，**b** -...线到**p**，**q** -... 线开始逐行绘制对象。
+
+以一种非常相似的方式，如绿色箭头所示：...，**p**，**k**，**f**，**a**，...，**q**，**l**， **g**，**b**，...![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/grid1.jpg)
+
+所以这很简单。我们可以仅基于视图向量来确定顺序。如果使用“ + x”，“-x”，“ + y”和“ -y”代替“从左至右”和“从上至下”，我们可以很容易地看到存在8种不同的可能顺序：{ +x+y, +x-y, -x+y, +x-y, +y+x, +y-x, -y+x, -y-x } (basically we have 4 options for the first axis (+x, -x, +y, -y) and the there is only 2 remaining for the second (+x, -x or +y, -y, depending on the first option).
+
+如您所见，一个顺序和另一个顺序之间的过渡是在半象限上完成的。该图显示了分为8个部分的2D正方形分割，显示了相同顺序有效的区域（您可以看到橙色和绿色区域，与我们在上图中用作示例的箭头相对应）。现在的诀窍很明显：预先计算8个索引数组，并保存内存中，每个可能的顺序一个。对于每个渲染过程，采用视图方向并计算最合适的顺序，然后使用它进行渲染。因此，我们基本上跳过了任何排序时间，也跳过了CPU和GPU之间的总线通信。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/gfx_01.jpg)
+
+==In 3D==
+
+在3D中，情况是完全一样的，我们只有一个轴。所不同的是，现在可能的顺序数量更大。对于第一个轴的顺序，我们有6个选项（-x，+ x，-y，+ y，-z，+ z），对于第二个轴，我们有4个选项（假设我们选择了-x，我们仍然有-y，+ y，-z，+ z）和2作为最后一个轴（假设我们选择了+ z，我们仍然有-y和+ y）。因此，总共有48种可能性！根据应用程序的不同，这可能会占用大量视频内存。当然，有一些简单的技巧可以提供帮助。例如，我们将48个副本保留在内存中，然后仅上传所需的副本。假设帧到帧的一致性，这种情况应该很少发生。我们甚至可以有一个与渲染并行运行的小线程，只计算索引数组，而不是预先计算并将其存储在系统内存中。
+
+另一个技巧是使用顶层网格对对象的单元格进行排序，然后对单元格中的对象进行随机排序。如果物体在一片草地上，则可以很好地工作。甚至，如果我们已经拥有八叉树数据结构来对数据集执行平截头剔除和遮挡查询，则可以使用此技术对八叉树节点进行排序，然后在可见节点中进行标准CPU排序，甚至可以预先计算索引数组节点。
+
+现在，视图矢量可以属于多维数据集表面中的48个可能的部分，如下图所示。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/gfx_00.jpg)
+
+为了完成本文，需要一些代码来说明如何从3D视图向量中获取索引（从0到47）。可能有更简单的方法（紧凑阅读）。
+
+```c#
+int calcOrder( const vec3 & dir )
+{
+    int signs;
+
+    const int   sx = dir.x<0.0f;
+    const int   sy = dir.y<0.0f;
+    const int   sz = dir.z<0.0f;
+    const float ax = fabsf( dir.x );
+    const float ay = fabsf( dir.y );
+    const float az = fabsf( dir.z );
+
+    if( ax>ay && ax>az )
+    {
+        if( ay>az ) signs = 0 + ((sx<<2)|(sy<<1)|sz);
+        else        signs = 8 + ((sx<<2)|(sz<<1)|sy);
+    }
+    else if( ay>az )
+    {
+        if( ax>az ) signs = 16 + ((sy<<2)|(sx<<1)|sz);
+        else        signs = 24 + ((sy<<2)|(sz<<1)|sx);
+    }
+    else
+    {
+        if( ax>ay ) signs = 32 + ((sz<<2)|(sx<<1)|sy);
+        else        signs = 40 + ((sz<<2)|(sy<<1)|sx);
+    }
+
+    return signs;
+}
+```
+
+
+
+
+
+
+
+#### Smooth Minimum
+
+隐式过程建模的基本构建块之一（例如，当基于[基本图元](http://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm)构建用于光线行进的距离场时）是联合运算符
+
+```c#
+float opU( float d1, float d2 )
+{
+    return min( d1, d2 );
+}
+```
+
+该算子效果很好，但存在一个问题，即所得形状的导数不连续。换句话说，将两个光滑对象统一在一起的结果表面不再是光滑表面。从外观角度来看，这通常很不方便，例如在尝试对有机形状进行建模时。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/spider.PNG)
+
+==Several implementations==
+
+当然，平滑混合形状的方法是摆脱min（）函数的不连续性。但是我们希望当两个原语之一远于另一个原语时，smooth-min函数的行为就像min（）一样。我们只想在两个值变得相似的区域应用平滑度。
+
+```c#
+// exponential smooth min (k = 32);
+float smin( float a, float b, float k )
+{
+    float res = exp2( -k*a ) + exp2( -k*b );
+    return -log2( res )/k;
+}
+// polynomial smooth min (k = 0.1);
+float smin( float a, float b, float k )
+{
+    float h = clamp( 0.5+0.5*(b-a)/k, 0.0, 1.0 );
+    return mix( b, a, h ) - k*h*(1.0-h);
+}
+// power smooth min (k = 8);
+float smin( float a, float b, float k )
+{
+    a = pow( a, k ); b = pow( b, k );
+    return pow( (a*b)/(a+b), 1.0/k );
+}
+```
+
+这三种功能产生的平滑结果具有不同的质量。这三个参数接受控制平滑度的半径/距离的参数*k*。从这三个中，多项式可能是最快的，也是最容易控制的，因为*k*直接映射到混合频带的大小/距离。与其他两个不同，它可能遭受二阶不连续性（导数）的困扰，但对于大多数应用程序而言，在视觉上足够令人满意。
+
+基于指数和幂的平滑最小函数都可以推广到两个以上的距离，因此它们可能更适合于计算到超过2的大点集的最小距离，例如当您想要计算[平滑的voronoi模式](http://www.iquilezles.org/www/articles/smoothvoronoi/smoothvoronoi.htm)或插值点云。在基于功率的最小平滑函数的情况下，表达式*a \* b /（a + b）的*推广公式与计算N个并联电阻的全局电阻时的公式相同：1 /（1 / a + 1 / b + 1 / c + ...）。例如，对于三个距离，您将得到a * b * c /（b * c + c + a + a * b）。
+
+除了接受一个可变数量的点之外，与多项式smin()相比，指数smin()的另一个优点是，当使用两个参数同时多次调用时，无论操作的顺序如何，指数smin()都会产生相同的结果。然而，多项式smin()不是顺序无关的。更明确地说，smin(a, smin(b,c))对于指数smin()等于smin(b,smin(a,c))，但对于多项式却不是。That means that the exponential smin() allows one to process long lists of distances in any arbitrary order and slowly compute the smin, while the polynomial is ordering dependent.
+
+以等效但更有效的形式重写了多项式smin（）
+
+```c#
+// polynomial smooth min (k = 0.1);
+float smin( float a, float b, float k )
+{
+    float h = max( k-abs(a-b), 0.0 )/k;
+    return min( a, b ) - h*h*k*(1.0/4.0);
+}
+```
+
+正如Shadertoy用户TinyTexel所指出的，可以推广到比二次多项式提供的(C1)更高的连续性级别。移到三次曲线上可以得到C2的连续性，而且不会比二次曲线贵很多:
+
+```c#
+// polynomial smooth min (k = 0.1);
+float sminCubic( float a, float b, float k )
+{
+    float h = max( k-abs(a-b), 0.0 )/k;
+    return min( a, b ) - h*h*h*k*(1.0/6.0);
+}
+```
+
+==Sumary==
+
+最有用的最小平滑函数的性质:
+
+Quadratic:
+
+- smin(a,b,k) = min(a,b) - h²/(4k)
+  h = max( k-abs(a-b), 0 )
+- Continity: C1
+- Order Independent: No
+- Generalized: No
+
+Cubic:
+
+- smin(a,b,k) = min(a,b) - h³/(6k²)
+  h = max( k-abs(a-b), 0)
+- Continity: C2
+- Order Independent: No
+- Generalized: No
+
+Exponential:
+
+- smin(a,b,k) = -ln( e-k⋅a + e-k⋅b )/k
+- Continity: C-inf
+- Order Independent: Yes
+- Generalized: Yes
