@@ -7,8 +7,8 @@
 | [Penumbra Shadows In Raymarched SDFS](#Penumbra-Shadows-In-Raymarched-SDFS) | 距离场中软阴影的计算技巧                     |
 | [Simple Pathtracing](#Simple-Pathtracing)                    | 简单的路径追踪                               |
 | [Multiresolution Ambient occlusion](#Multiresolution-Ambient-occlusion) | 在传统的SSAO（中频）的基础上加上高频和低频AO |
-| [Outdoors Lighting](#Outdoors Lighting)                      |                                              |
-|                                                              |                                              |
+| [Outdoors Lighting](#Outdoors Lighting)                      | 室外大场景的渲染技巧与思路                   |
+| [Box Occlusion](#Box-Occlusion)                              |                                              |
 |                                                              |                                              |
 |                                                              |                                              |
 |                                                              |                                              |
@@ -495,4 +495,10 @@ color = pow( color, vec3(1.0/2.2) );
 // display
 displayColor = color;
 ```
+
+
+
+
+
+#### Box Occlusion
 
