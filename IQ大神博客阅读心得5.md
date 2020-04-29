@@ -8,8 +8,8 @@
 | [Simple Pathtracing](#Simple-Pathtracing)                    | 简单的路径追踪                               |
 | [Multiresolution Ambient occlusion](#Multiresolution-Ambient-occlusion) | 在传统的SSAO（中频）的基础上加上高频和低频AO |
 | [Outdoors Lighting](#Outdoors Lighting)                      | 室外大场景的渲染技巧与思路                   |
-| [Box Occlusion](#Box-Occlusion)                              |                                              |
-|                                                              |                                              |
+| [Box Occlusion](#Box-Occlusion)                              | 正方体遮蔽                                   |
+| [Terrain Raymarching](#Terrain-Raymarching)                  |                                              |
 |                                                              |                                              |
 |                                                              |                                              |
 
@@ -501,4 +501,245 @@ displayColor = color;
 
 
 #### Box Occlusion
+
+由于该盒子是由6个四边形组成的，因此我们需要确定哪些阴影对着阴影点，并计算它们的遮挡。由于盒子是一个凸物体，并且没有任何面的投影重叠，因此我们可以分别计算每个面的遮挡作用，然后将它们全部加起来即可。
+
+这里四边形遮挡的最终表达式如下
+$$
+occ=\frac{1}{2\pi}\cdot \sum_{t=0}^{3}(n\cdot(v_i\times v_{i+1}))\cdot acos(v_i\cdot v_{i+1})
+$$
+此处的顶点当然是相对于遮挡点的，必须对其进行归一化：
+$$
+v_i=\frac{p_i}{|p_i|}
+$$
+对于一个完全在阴影下的一个点的地平线上的盒子，我们所要做的就是计算每个面上面的公式。当然，由于我们是通过边进行集成的，所以我们可以跨共享边的面重用大部分工作。因此，如果实现是无分支的，那么上面的公式只需计算12次。然后，根据箱子正面的6个面中哪一个面对着阴影点，我们可以根据需要添加贡献:
+
+```c#
+float boxOcclusion( in vec3 pos, in vec3 nor, in vec3 box[8] ) 
+{
+    // 8 points    
+    vec3 v[0] = normalize( box[0] );
+    vec3 v[1] = normalize( box[1] );
+    vec3 v[2] = normalize( box[2] );
+    vec3 v[3] = normalize( box[3] );
+    vec3 v[4] = normalize( box[4] );
+    vec3 v[5] = normalize( box[5] );
+    vec3 v[6] = normalize( box[6] );
+    vec3 v[7] = normalize( box[7] );
+    
+    // 12 edges    
+    float k02 = dot( n, normalize( cross(v[2],v[0])) ) * acos( dot(v[0],v[2]) );
+    float k23 = dot( n, normalize( cross(v[3],v[2])) ) * acos( dot(v[2],v[3]) );
+    float k31 = dot( n, normalize( cross(v[1],v[3])) ) * acos( dot(v[3],v[1]) );
+    float k10 = dot( n, normalize( cross(v[0],v[1])) ) * acos( dot(v[1],v[0]) );
+    float k45 = dot( n, normalize( cross(v[5],v[4])) ) * acos( dot(v[4],v[5]) );
+    float k57 = dot( n, normalize( cross(v[7],v[5])) ) * acos( dot(v[5],v[7]) );
+    float k76 = dot( n, normalize( cross(v[6],v[7])) ) * acos( dot(v[7],v[6]) );
+    float k37 = dot( n, normalize( cross(v[7],v[3])) ) * acos( dot(v[3],v[7]) );
+    float k64 = dot( n, normalize( cross(v[4],v[6])) ) * acos( dot(v[6],v[4]) );
+    float k51 = dot( n, normalize( cross(v[1],v[5])) ) * acos( dot(v[5],v[1]) );
+    float k04 = dot( n, normalize( cross(v[4],v[0])) ) * acos( dot(v[0],v[4]) );
+    float k62 = dot( n, normalize( cross(v[2],v[6])) ) * acos( dot(v[6],v[2]) );
+    
+    // 6 faces
+    float occ = 0.0;
+    occ += ( k02 + k23 + k31 + k10) * step( 0.0,  v0.z );
+    occ += ( k45 + k57 + k76 + k64) * step( 0.0, -v4.z );
+    occ += ( k51 - k31 + k37 - k57) * step( 0.0, -v5.x );
+    occ += ( k04 - k64 + k62 - k02) * step( 0.0,  v0.x );
+    occ += (-k76 - k37 - k23 - k62) * step( 0.0, -v6.y );
+    occ += (-k10 - k51 - k45 - k04) * step( 0.0,  v0.y );
+        
+    return occ / 6.283185;
+}
+```
+
+==With clipping==
+
+执行此操作的较慢方法是将框拆分为12个三角形，并考虑剪裁，为每个三角形计算遮挡。参见此处的示例：[https](https://www.shadertoy.com/view/4sSXDV) : [//www.shadertoy.com/view/4sSXDV](https://www.shadertoy.com/view/4sSXDV)。一个更聪明的选择是首先修剪12个边缘并生成一组新的边缘和面，然后对其进行遮挡。无论如何，这是一个计算可能被修剪的三角形的解析遮挡的示例：
+
+<details>    
+<summary>代码</summary>    
+<pre><code>  
+float triOcclusionWithClipping( in vec3 pos, in vec3 nor, in vec3 v0, in vec3 v1, in vec3 v2, in vec4 plane )
+{
+    if( dot( v0-pos, cross(v1-v0,v2-v0) ) < 0.0 ) return 0.0;  // back facing
+    float s0 = dot( vec4(v0,1.0), plane );
+    float s1 = dot( vec4(v1,1.0), plane );
+    float s2 = dot( vec4(v2,1.0), plane );
+    //
+    float sn = sign(s0) + sign(s1) + sign(s2);
+ 	//
+    vec3 c0 = clip( v0, v1, plane );
+    vec3 c1 = clip( v1, v2, plane );
+    vec3 c2 = clip( v2, v0, plane );
+    // 3 (all) vertices above horizon
+    if( sn>2.0 )  
+    {
+        return ftriOcclusion(  pos, nor, v0, v1, v2 );
+    }
+    // 2 vertices above horizon
+    else if( sn>0.0 ) 
+    {
+        vec3 pa, pb, pc, pd;
+              if( s0<0.0 )  { pa = c0; pb = v1; pc = v2; pd = c2; }
+        else  if( s1<0.0 )  { pa = c1; pb = v2; pc = v0; pd = c0; }
+        else/*if( s2<0.0 )*/{ pa = c2; pb = v0; pc = v1; pd = c1; }
+        return fquadOcclusion( pos, nor, pa, pb, pc, pd );
+    }
+    // 1 vertex above horizon
+    else if( sn>-2.0 ) 
+    {
+        vec3 pa, pb, pc;
+              if( s0>0.0 )   { pa = c2; pb = v0; pc = c0; }
+        else  if( s1>0.0 )   { pa = c0; pb = v1; pc = c1; }
+        else/*if( s2>0.0 )*/ { pa = c1; pb = v2; pc = c2; }
+        return ftriOcclusion(  pos, nor, pa, pb, pc );
+    }
+    // zero (no) vertices above horizon
+    //
+    return 0.0;
+}
+</code></pre>
+</details>
+
+<details>    
+<summary>依赖函数</summary>    
+<pre><code>  
+// fully visible front facing Triangle occlusion
+float ftriOcclusion( in vec3 pos, in vec3 nor, in vec3 v0, in vec3 v1, in vec3 v2 )
+{
+    vec3 a = normalize( v0 - pos );
+    vec3 b = normalize( v1 - pos );
+    vec3 c = normalize( v2 - pos );
+	//
+    return (dot( nor, normalize( cross(a,b)) ) * acos( dot(a,b) ) +
+            dot( nor, normalize( cross(b,c)) ) * acos( dot(b,c) ) +
+            dot( nor, normalize( cross(c,a)) ) * acos( dot(c,a) ) ) / 6.283185;
+}
+// fully visible front acing Quad occlusion
+float fquadOcclusion( in vec3 pos, in vec3 nor, in vec3 v0, in vec3 v1, in vec3 v2, in vec3 v3 )
+{
+    vec3 a = normalize( v0 - pos );
+    vec3 b = normalize( v1 - pos );
+    vec3 c = normalize( v2 - pos );
+    vec3 d = normalize( v3 - pos );
+    //
+    return (dot( nor, normalize( cross(a,b)) ) * acos( dot(a,b) ) +
+            dot( nor, normalize( cross(b,c)) ) * acos( dot(b,c) ) +
+            dot( nor, normalize( cross(c,d)) ) * acos( dot(c,d) ) +
+            dot( nor, normalize( cross(d,a)) ) * acos( dot(d,a) ) ) / 6.283185;
+}
+
+
+
+
+#### Terrain Raymarching
+
+基本思想是具有一个高度函数**y = f（x，z）**，该函数为平面**（x，z）**中的每个2d点定义该点处地形的高度。
+
+一旦有了**f（x，z）**这样的函数，目标就是使用光线跟踪设置来渲染图像并做其他效果（如阴影或反射）。这意味着对于给定的光线，该光线在空间中具有某个起点（例如摄影机位置）和方向（例如视图方向），我们要计算光线与地形**f**的交点。最简单的方法是缓慢地沿射线方向缓慢前进，然后在每个步进点确定我们是否高于地形水平。下图显示了该过程。我们从靠近相机的光线中的某个点（图像中最左边的蓝色点）开始。我们在当前**x**和**z**处评估地形函数**f**坐标以获取地形的高度**h**：**h = f（x，z）**。现在，我们将蓝色采样点**y**的高度与**h进行比较**，我们意识到**y> h**或换句话说，蓝色点位于山的上方。因此，我们进入射线中的下一个蓝点，然后重复该过程。也许在某个点上，采样点之一将落在地形以下，例如图像中的黄色点。发生这种情况时，**y** ，我们知道射线穿过了地形表面。我们可以在此处停下来，将当前的黄色点标记为相交点（即使我们知道它比真实的相交点稍远），也可以将最后一个蓝色的点标记为相交点（比真实的相交点稍近）或最后一个蓝点和黄点的平均值。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/lighting/gfx02.png)
+
+```c#
+bool castRay( const vec3 & ro, const vec3 & rd, float & resT )
+{
+    const float dt = 0.01f;
+    const float mint = 0.001f;
+    const float maxt = 10.0f;
+    for( float t = mint; t < maxt; t += dt )
+    {
+        const vec3 p = ro + rd*t;
+        if( p.y < f( p.x, p.z ) )
+        {
+            resT = t - 0.5f*dt;
+            return true;
+        }
+    }
+    return false;
+}
+```
+
+**mint**, **maxt**  **dt** 应该适应每一个场景。第一个是到近切平面的距离，你可以把它设为0。第二步是光线允许通过的最大距离，即可见距离。第三步是步长，步长直接影响渲染速度和图像质量。当然，它越大，速度越快，但是地形采样质量越低。
+
+代码非常简单。当然，可以进行许多优化和改进。例如，通过对蓝点和黄点之间的地形高度进行线性近似并计算射线与理想地形之间的解析交点，可以更准确地完成交点的精度。
+
+另一个优化是注意到，随着移动的潜在交点越来越远(t变得越大)，错误变得越不重要，因为随着距离摄像机越来越远，屏幕空间中的几何细节变得越来越小。事实上，细节随距离呈反线性衰减，所以我们可以使我们的误差或精度与距离呈线性变化。
+
+==*支持地形的线性插值和自适应误差*==
+
+```c#
+bool castRay( const vec3 & ro, const vec3 & rd, float & resT )
+{
+    float dt = 0.01f;
+    const float mint = 0.001f;
+    const float maxt = 10.0f;
+    float lh = 0.0f;
+    float ly = 0.0f;
+    for( float t = mint; t < maxt; t += dt )
+    {
+        const vec3  p = ro + rd*t;
+        const float h = f( p.xz );
+        if( p.y < h )
+        {
+            // interpolate the intersection distance
+            resT = t - dt + dt*(lh-ly)/(p.y-ly-h+lh);
+            return true;
+        }
+        // allow the error to be proportinal to the distance
+        dt = 0.01f*t;
+        lh = h;
+        ly = p.y;
+    }
+    return false;
+}
+```
+
+因此，构建图像的完整算法很简单。对于屏幕上的每个像素，构造一束光线，该光线从相机位置开始穿过像素位置，就好像屏幕就在查看器正前方一样，然后投射该光线。一旦找到相交点，就必须收集地形的颜色，加阴影并返回颜色。这就是*terrainColor（）*函数必须执行的操作。如果没有与地形的交叉点，则必须为天空计算正确的颜色。因此，主要代码如下所示：
+
+```c#
+void renderImage( vec3 *image )
+{
+    for( int j=0; j < yres; j++ )
+    for( int i=0; i < xres; i++ )
+    {
+        Ray ray = generateRayForPixel( i, j );
+
+        float t;
+
+        if( castRay( ray.origin, ray.direction, t ) )
+        {
+            image[xres*j+i] = terrainColor( ray, t );
+        }
+        else
+        {
+            image[xres*j+i] = skyColor();
+        }
+    }
+}
+```
+
+通常terrainColor()首先需要计算交点p，然后计算正常表面n，做一些基于正常照明/阴影s，是这样的:
+
+```c#
+vec3 terrainColor( const Ray & ray, float t )
+{
+    const vec3 p = ray.origin + ray.direction * t;
+    const vec3 n = getNormal( p );
+    const vec3 s = getShading( p, n );
+    const vec3 m = getMaterial( p, n );
+    return applyFog( m * s, t );
+}
+vec3 getNormal( const vec3 & p )
+{
+    return normalize( vec3( f(p.x-eps,p.z) - f(p.x+eps,p.z),
+                            2.0f*eps,
+                            f(p.x,p.z-eps) - f(p.x,p.z+eps) ) );
+}
+```
+
+getShading（）函数可能需要根据模拟太阳的强大黄色偏光和模拟天顶的暗淡蓝色区域光（某种环境光遮挡）来计算一些漫射光。在地形上做阴影很有趣，因为可以进行许多优化。一种这样的技巧是通过计算阴影射线进入地形的深度来免费计算软阴影。通过smoothstep（）设置这一数量，就可以控制山脉的半影。
+
+要获取表面材料，通常是山的海拔高度和坡度以及点**p**被考虑在内。例如，在高海拔地区，您可以返回白色，而在低海拔地区，则可以返回棕色或灰色。可以使用一些*smoothstep（）*函数再次控制过渡。只需记住将所有参数随机化（使用佩林噪声），这样过渡就不会恒定，因此看起来更自然。考虑到地形的坡度也是一个好主意，因为雪和草通常只停留在平坦的表面上。因此，如果法线非常水平（即**ny**小），则最好将其与一些灰色或棕色混合，以去除雪或草。这使纹理自然适合地形，并且图像变得更丰富。
 
