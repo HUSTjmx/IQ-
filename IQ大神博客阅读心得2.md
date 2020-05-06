@@ -352,7 +352,7 @@ void mainImage( out vec4 fragColor, in vec2 p )
 
 一个[简单的尝试](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E4%BB%A3%E7%A0%81/%E5%88%86%E5%BD%A2/GOT1.shader)
 
-```
+```c#
 #define MAX_NUM 128.0
 #define COLORING dist/1.1, dist*dist/0.8, dist*dist*dist/0.9
 #define TRAP abs(dis.y)+abs(dis.x)
