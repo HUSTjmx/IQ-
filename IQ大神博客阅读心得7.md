@@ -10,8 +10,8 @@
 | [Advanced Value Noise](#Advanced-Value-Noise)                | ValueNoise的分析和使用       |
 | [Gradient Noise Derivatives](#Gradient-Noise-Derivatives)    | 梯度噪声导数的实现           |
 | [Filtering The Checkerboard Pattern](#Filtering-The-Checkerboard-Pattern) |                              |
-|                                                              |                              |
-|                                                              |                              |
+| [Filterable Proceduals](#Filterable-Proceduals)              | 简单分析抗锯齿的集合         |
+| [FBM==](#FBM)==                                              | ==分数布朗运动的介绍和实现== |
 |                                                              |                              |
 
 
@@ -803,4 +803,178 @@ vec3 noised( in vec2 x )
 
 ## Filtering The Checkerboard Pattern
 
-棋盘图案通常在计算机图形工具和纸张中被视为更复杂的图案或纹理的占位符。尽管如此，当使用它时，仍然没有理由草率-用户仍然期望图像看起来高质量，自然包括适当的抗锯齿。一种方法是将实际的棋盘格图案简单地存储在mipmapped纹理中，在这种情况下，将以通常的方式执行过滤。但是，由于不同的原因，您可能要避免使用纹理作为图案，而是按程序进行。然后，本文可能会引起您的兴趣，因为它说明了如何分析性地执行棋盘图案的过滤（没有预先计算的纹理或mips）
+​	棋盘图案通常在计算机图形工具和纸张中被视为更复杂的图案或纹理的占位符。尽管如此，当使用它时，仍然没有理由草率-用户仍然期望图像看起来高质量，自然包括适当的抗锯齿。一种方法是将实际的棋盘格图案简单地存储在mipmapped纹理中，在这种情况下，将以通常的方式执行过滤。但是，由于不同的原因，您可能要避免使用纹理作为图案，而是按程序进行。然后，本文可能会引起您的兴趣，因为它说明了如何分析性地执行棋盘图案的过滤（没有预先计算的纹理或mips）
+
+[具体网址](https://www.iquilezles.org/www/articles/checkerfiltering/checkerfiltering.htm)
+
+
+
+
+
+
+
+## Filterable Proceduals
+
+​	棋盘格图案可以在分析上进行过滤，这使其成为高质量程序纹理的理想选择。许多其他模式接受简单的分析积分，因此可以进行分析过滤（抗锯齿）。本文是其中的简短（暂时）集合。泛化非常容易，例如，获得各种点/线模式很简单，因此，我仅记录了基本的点，供您结合使用：
+
+[Box filtered checkerboard](https://www.shadertoy.com/view/XlcSz2)
+
+```c#
+float filteredCheckers( in vec2 p, in vec2 dpdx, in vec2 dpdy )
+{
+    vec2 w = max(abs(dpdx), abs(dpdy));
+    vec2 i = 2.0*(abs(fract((p-0.5*w)*0.5)-0.5)-
+                  abs(fract((p+0.5*w)*0.5)-0.5))/w;
+    return 0.5 - 0.5*i.x*i.y;                  
+}
+```
+
+[Box filtered grid](https://www.shadertoy.com/view/XtBfzz)
+
+```c#
+float filteredGrid( in vec2 p, in vec2 dpdx, in vec2 dpdy )
+{
+    const float N = 10.0;
+    vec2 w = max(abs(dpdx), abs(dpdy));
+    vec2 a = p + 0.5*w;                        
+    vec2 b = p - 0.5*w;           
+    vec2 i = (floor(a)+min(fract(a)*N,1.0)-
+              floor(b)-min(fract(b)*N,1.0))/(N*w);
+    return (1.0-i.x)*(1.0-i.y);
+}
+```
+
+Box filtered squares
+
+```c#
+float filteredSquares( in vec2 p, in vec2 dpdx, in vec2 dpdy )
+{
+    const float N = 3.0;
+    vec2 w = max(abs(dpdx), abs(dpdy));
+    vec2 a = p + 0.5*w;                        
+    vec2 b = p - 0.5*w;           
+    vec2 i = (floor(a)+min(fract(a)*N,1.0)-
+              floor(b)-min(fract(b)*N,1.0))/(N*w);
+    return 1.0-i.x*i.y;
+}
+```
+
+Box filtered crosses
+
+```c#
+float filteredCrosses( in vec2 p, in vec2 dpdx, in vec2 dpdy )
+{
+    const float N = 3.0;
+    vec2 w = max(abs(dpdx), abs(dpdy));
+    vec2 a = p + 0.5*w;                        
+    vec2 b = p - 0.5*w;           
+    vec2 i = (floor(a)+min(fract(a)*N,1.0)-
+              floor(b)-min(fract(b)*N,1.0))/(N*w);
+    return 1.0-i.x-i.y+2.0*i.x*i.y;
+}
+```
+
+[Box filtered XOR pattern](https://www.shadertoy.com/view/tdBXRW)
+
+```c#
+float filteredXor( in vec2 p, in vec2 dpdx, in vec2 dpdy )
+{
+    float xor = 0.0;
+    for( int i=0; i<8; i++ )
+    {
+        vec2 w = max(abs(dpdx), abs(dpdy)) + 0.01;  
+        vec2 f = 2.0*(abs(fract((p-0.5*w)/2.0)-0.5)-
+		              abs(fract((p+0.5*w)/2.0)-0.5))/w;
+        xor += 0.5 - 0.5*f.x*f.y;
+        
+        dpdx *= 0.5;
+        dpdy *= 0.5;
+        p    *= 0.5;
+        xor  *= 0.5;
+    }
+    return xor;
+}
+```
+
+
+
+
+
+
+
+## FBM
+
+​	fBM代表分数布朗运动。但是在讨论自然，分形和程序性地形之前，让我们先进行一些理论性的介绍。
+
+> ​	布朗运动(BM)，不含 "分数 "部分，是指给定物体的位置随着时间的推移而随机增量变化的运动(想象一下 "position+=white_noise(); "的序列)。 从形式上讲，BM是白噪声的积分。这些运动所定义的路径是随机的，但（统计学上）是自相似的，也就是说，放大后的路径与整个路径相似。
+>
+> ​	分数布朗运动是一个类似的过程，在这个过程中，增量并不是完全独立的，但这个过程有某种记忆。如果这种记忆是正相关的，那么在某一特定方向上的变化会倾向于产生未来同一方向的变化，这样的路径就会比虚构的布朗运动更平滑。
+>
+> ​	如果记忆体是负相关的，一个正相关的变化后面很可能会有一个负相关的变化，路径的随机性会大很多。控制记忆或积分的行为，从而控制自相似性，其分形维度和功率谱的参数称为Hurst指数，通常简称H。事实上，H取值在0和1之间，分别描述粗糙和平滑的fBM，其中正常的BM发生在H=1/2时。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/procedural%20content/rainForest.jpg)
+
+> fBM() was used to generate the terrain, the clouds, the tree distribution, their color variations, and the canopy details. "Rainforest", 2016: https://www.shadertoy.com/view/4ttSWf
+
+​	现在，这完全是理论上的问题，而不是我们计算机图形学人们如何生成fBM，但是我想描述一下它，因为即使在进行图形处理时也要牢记其质量，这一点很重要。让我们看看如何：
+
+​	我们知道，同样是随机的自相似结构，对于程序化地建模各种自然现象非常有用，从云层到山体到树皮纹理，都是如此。直观地看，自然界中的形状可以分解成几个描述整体形态的大形状，再分解成更多的中等大小的形状，将初始形状的基本轮廓或表面扭曲，甚至更多的甚至更小的形状也可以在前面的轮廓和形状的基础上增加额外的细节。这种增量的方式可以为对象增加细节，可以很容易地对我们的形状进行带状限制，以达到LOD（Level Of Detail）和滤波/反锯齿的目的，是一种很容易编码的方式，可以产生视觉上令人惊叹的效果。正因为如此，它被广泛地应用于电影和游戏中。然而，我认为fBM不一定是一个很好理解的机制。因此，本文将介绍它的功能以及它们的主要参数H的不同值的不同光谱和视觉特性，并辅以一些实验和测量。
+
+==Basic Idea==
+
+fBMs的正常构建方式(有多种方法)是通过我们选择的一些噪声函数(值、梯度、细胞、voronoise、三角、单纯形……)，然后用它显式地构造自相似性。fBM通过从一个基本的噪声信号开始，并不断地向其添加越来越小的详细噪声调用来实现这一点。像这样的东西：
+
+```c#
+float fbm(in vecN x,in float H)
+{
+	float t=0.0;
+	for(int i=0;o<numOctaves;i++)
+	{
+		float f=pow(2.0,float(i));
+		float a=pow(f,-H);
+		t+=a*noise(f*x);
+	}
+	return t;
+}
+```
+
+​	这就是FBM的最纯粹的形式。每一个噪声()信号(或 "波")，它与运行中的总和相加，但它在水平方向上被压缩了两倍，有效地减少了两倍波长，其振幅也成倍地减少。这种波的积累与波长和振幅的协调减少产生了类似自然界中的自相似性。毕竟，在一个给定的空间里，只允许有几个大的形状变化，而有很多小的形状变化。听起来很有道理。事实上，这种动力法则的行为在自然界中随处可见。
+
+​	您可能注意到的第一件事是，上面的代码与您可能在Shadertoy和其他代码片段中看到的大多数FBM实现并不完全相同。下面的代码与前面的代码相同，但是更受欢迎，因为它避免了昂贵的pow函数
+
+```c#
+float fbm( in vecN x, in float H )
+{    
+    float G = exp2(-H);
+    float f = 1.0;
+    float a = 1.0;
+    float t = 0.0;
+    for( int i=0; i<numOctaves; i++ )
+    {
+        t += a*noise(f*x);
+        f *= 2.0;
+        a *= G;
+    }
+    return t;
+}
+```
+
+​	所以我们先来谈谈 "numOctaves"。由于每个噪声的波长是前一个噪声的一半（或者说是频率的两倍），所以原本应该是 "numFrequencies "的术语被 "numOctaves "取代，作为对音乐术语的参考，两个音符之间间隔一个八度相当于基音的频率增加一倍。  FBMs can be constructed by incrementing the frequency of each noise by something different than two.，"八度 "这个词在技术上就不再是正确的了，但我见过有人用这个词。有的情况下，你甚至可能想创建频率以恒定的线性速率增加的波/噪声，而不是几何学上的波/噪声，就像在FFT中一样（FFT确实可以用来生成周期性的fBMs()，这对于海洋纹理来说是很有用的）。但是，正如我们稍后在这篇文章中看到的那样，对于大多数基噪声()函数，我们实际上可以以2的倍数递增频率，这意味着我们只需要很少的迭代次数，仍然可以得到好看的fBMS。事实上，一次合成一个八度的fBMS可以让我们的效率非常高——例如，只需24个八度/迭代，我们就可以创建覆盖整个地球的fBMS，并提供2米的细节。如果用线性增加的频率做同样的事情，则需要多做几个数量级的迭代。
+
+​	关于频率序列的最后一个注意是，从$$f_i=2^i$$的方法转为$$f_i=2\cdot f_{i-1}$$，给我们提供了频率倍增（或波长减半）的灵活性——我们可以很容易地将环路解开，并通过将2.0替换为2.01、1.99和类似的值来略微调整每个倍频程，这样，我们积累的不同噪声波的峰谷和峰顶就不会完全叠加，这有时会产生不真实的效果。在二维fBM的情况下，除了将域的值加八度外，还可以将域旋转一下。
+
+​	现在，在FBM()的新代码实现中，我们不仅将频率的产生从基于功率的公式替换成了迭代过程，而且我们还将指数振幅衰减也替换成了由 "增益 "系数G驱动的几何序列。然而更多的时候，图形程序员会忽略或不知道Hurst指数H，只直接用G的值来工作。因为我们知道H从0到1，G从1到0.5。而事实上，G=0.5是大多数人在他们的FBM实现中硬编码的值。这种硬编码并不像留下G这个变量那样灵活，但这样做是有道理的，下面我们就来看看原因。
+
+==Self Similarity==
+
+​	正如我们之前提到的，参数H决定了曲线的自相似性（ This is statistical self-similarity of course）。因此，在一维FBM的情况下，如果我们在水平方向上放大U倍，那么我们在垂直方向上应该放大多少倍来得到”看着一样“的曲线？因为$$a=f^{-H},then \quad a\cdot V=(f \cdot U)^{-H}=f^{-H}\cdot U^{-H}=a\cdot U^{-H},Meaning \quad V=U^{-H}$$，因此，如果要以水平因子2放大fBM，则需要以$$2^{-H}$$因子垂直缩放，而$$2^{-H}$$是G！并非巧合的是，当使用G缩放我们的噪声幅度时，我们以$$f=2^{-H}$$的缩放因子建立FBM的自相似性。
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/procedural%20content/gfx09.gif)
+
+> Brownian Motion (H=1/2) and anisotropic zooming. Right fBM (H=1) and isotropic zooming.https://www.shadertoy.com/view/WsV3zz
+
+​	现在，我们使用程序构造山又如何呢？朴素的布朗运动的值是H = 1/2，这将产生G = 0.707107 ......这将生成一条曲线，当在X和Y方向上进行各向异性放大时，看起来就像它本身（如果是一维曲线）。实际上，对于每个水平缩放因子U，我们都需要按V = sqrt（U）垂直缩放曲线，这不是很自然。现在，股票市场曲线确实经常接近H = 1/2，因为从理论上讲，股票价值的每次增加或减少都与其先前的变化无关（请记住BM是一个没有记忆的过程）。在实践中，当然存在一些依赖关系，这些曲线更接近H = 0.6。
+
+​	但是自然过程在其中具有更多的“记忆”，并且自相似性比各向同性要大得多。例如，更高的山脉在其基础上的宽度也相同，即，它们通常不会伸展或变薄的山脉。因此，这建议山的G应该为1/2-在水平和垂直方向上均等缩放。这对应于H = 1，这表明山脉的轮廓应该比股市曲线更平滑。它们是，正如我们稍后将在本文中测量实际配置文件以确认这一点一样。但是我们确实从经验中知道，G = 0.5会产生美丽的分形地形和云层，因此==G = 0.5确实是在所有fbm实现中发现的G的最流行值。==
+
+​	现在，所有这些参数化的FBM函数确实具有名称，例如H = 0，G = 1的“ Pink Noise”或H = 1/2，G = sqrt（2）的“ Brown Noise”。是数字信号处理技术的先驱，并为有睡眠习惯的人们所熟知。实际上，让我们深入研究DSP并计算一些频谱特性，以便我们获得更多有关fBM的直觉。
