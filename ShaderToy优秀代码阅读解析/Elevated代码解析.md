@@ -1,8 +1,12 @@
+# Elevated代码解析
+
 作者：iq，网址：https://www.shadertoy.com/view/MdX3Rr
 
 标签：[procedural](https://www.shadertoy.com/results?query=tag%3Dprocedural), [3d](https://www.shadertoy.com/results?query=tag%3D3d), [raymarching](https://www.shadertoy.com/results?query=tag%3Draymarching), [distancefield](https://www.shadertoy.com/results?query=tag%3Ddistancefield), [terrain](https://www.shadertoy.com/results?query=tag%3Dterrain), [motionblur](https://www.shadertoy.com/results?query=tag%3Dmotionblur)
 
 总共两个部分：Image，Buffer A
+
+![](https://jmx-paper.oss-cn-beijing.aliyuncs.com/IQ%E5%A4%A7%E7%A5%9E%E5%8D%9A%E5%AE%A2%E9%98%85%E8%AF%BB/%E5%9B%BE%E7%89%87/ShaderToy%E4%BC%98%E7%A7%80%E4%BB%A3%E7%A0%81%E8%A7%A3%E6%9E%90/Elevated%E4%BB%A3%E7%A0%81%E8%A7%A3%E6%9E%90.gif)
 
 
 
@@ -139,7 +143,7 @@ vec3 camPath( float time )
 
 + 对于<u>camPath</u>，明显是计算相机的x，z位置，这里的问题的常量SC和1100为什么这么大，暂且不知。推测原因是采样扩大，坐标范围极大，毕竟我们这里显示的是无边的地形。此外，SC是全局变量，是有很多意义的，但调节的效果无法归纳其作用，暂时可以理解为某个值的单位变量，而1100这个常量根据调整的结果，可以理解为相机的移动速度。
 
-+ 然后根据terrainL计算此时相机xz位置对应的地形高度。（这里的算法就不做介绍了，个人估计是额外的地形生成算法），然后往上面做一个偏移，求出观察位置的Y（高度）以及视线向量的Y。有三个函数，本质是相同的，后缀L，M，H分别对应地形生成检测的精度等级。
++ 然后根据terrainL计算此时相机xz位置对应的地形高度。（这里的算法就不做介绍了，个人估计是额外的地形生成算法），然后往上面做一个偏移，求出观察位置的Y（高度）以及视线向量的Y。有三个函数，本质是相同的，后缀L，M，H分别对应地形生成的精度等级。
 
   ```c#
   float terrainL( in vec2 x )
@@ -220,11 +224,11 @@ vec3 rd = cam * normalize(vec3(s,fl));
   
 	return t;
   }
-```
+  ```
   
-  如果返回结果大于tmax，这说明没有击中地形，我们要==渲染天空，这里的天空渲染实在巧妙，可以借鉴==
+    如果返回结果大于tmax，这说明没有击中地形，我们要==渲染天空，这里的天空渲染实在巧妙，可以借鉴==
   
-  ```c#
+```c#
   // sky	根据Y的坐标模拟天空渐变的蓝色	，第二行和海平面处理近似，但变化没有那么急剧，效果相对于给蓝天套了一层由下至上逐渐稀释的白雾
   col = vec3(0.3,0.5,0.85) - rd.y*rd.y*0.5;
   col = mix( col, 0.85*vec3(0.7,0.75,0.85), pow( 1.0-max(rd.y,0.0), 4.0 ) );
@@ -239,9 +243,9 @@ vec3 rd = cam * normalize(vec3(s,fl));
 col = mix( col, 0.68*vec3(0.4,0.65,1.0), pow( 1.0-max(rd.y,0.0), 16.0 ) );
   t = -1.0;
 ```
-  
+
   其中，fbm代表分数布朗运动
-  
+
   ```c#
   float fbm( vec2 p )
   {
@@ -252,10 +256,10 @@ col = mix( col, 0.68*vec3(0.4,0.65,1.0), pow( 1.0-max(rd.y,0.0), 16.0 ) );
       f += 0.0625*texture( iChannel0, p/256.0 ).x;
     return f/0.9375;
   }
-```
-  
+  ```
+
   如果返回结果小于tmax，则开始渲染地面，首先简单的计算击中点的法线，这是地形计算法线的版本，具体法线计算的各种情况可见IQ6
-  
+
   ```c#
   vec3 calcNormal( in vec3 pos, float t )
   {
@@ -264,10 +268,10 @@ col = mix( col, 0.68*vec3(0.4,0.65,1.0), pow( 1.0-max(rd.y,0.0), 16.0 ) );
                               2.0*eps.x,
                             terrainH(pos.xz-eps.yx) - terrainH(pos.xz+eps.yx) ) );
   }
-```
-  
+  ```
+
   然后，计算岩石的颜色，这里的核心代码是第一行和第二行，后续都是一些优化和增加随机性，但是确实看不太懂，最后一行是添加细节的颜色变化。
-  
+
   ```c#
   float r = texture( iChannel0, (7.0/SC)*pos.xz/256.0 ).x;
   col = (r*0.25+0.75)*0.9*mix( vec3(0.08,0.05,0.03), vec3(0.10,0.09,0.08), texture(iChannel0,0.00007*vec2(pos.x,pos.y*48.0)/SC).x );
@@ -278,17 +282,17 @@ col = mix( col, 0.15*vec3(0.30,.30,0.10)*(0.25+0.75*r),smoothstep(0.95,1.0,nor.y
   //相当于细节贴图
   col *= 0.1+1.8*sqrt(fbm(pos.xz*0.04)*fbm(pos.xz*0.005));
   ```
-  
+
   雪的计算。首先，==对于参数h==，我们知道的是他跟地形的高度有关，除以单位值SC得到高度的无符号数值，然后加上一个分数布朗的相关随机值，关于参数内部除以SC，这个是无所谓的，对于效果没有影响，窃以为是统一格式，毕竟前面除了。总结来说，这个参数决定了海拔越高，越容易被雪覆盖的真实场景特性。==对于参数e==，则是和地形的法向量相关，当然还会有高度的影响：这里的规则是，海拔越高，出现雪所要求的地形法向量范围越大——海拔高的情况，除非是峭壁，不然都有很大概率被雪覆盖，而在海拔低的地区，则很难出现雪，除非法向量无限接近（0,1,0）的平地，而这里，据我观察，会有一个问题，那就是会导致零星雪（海拔低但完全平行的点会出现雪，但是因为地形是随机生成的，它的周围的点大概率不会平行，那么就不会被雪覆盖。这样就会很奇怪）。==对于参数o==，就公式而言，和法向量的x分量和海拔高度有关（正相关），就效果而言，有无，雪的分布基本无变化。但是仔细分析会有这样的想法：场景中，太阳的x坐标是-0.8，那么nor.x是负值的情况下，则说明该点所在坡是正对着太阳的，那么很明显，这种雪的覆盖率应该会降低，在通过海拔进行修正（只要海拔够高，管你有没有对着太阳，当然，峭壁除外）。==最后==，这三个参数进行相乘，决定该点是否被雪覆盖。
-  
+
   ```c#
 float h = smoothstep(55.0,80.0,pos.y/SC + 25.0*fbm(0.01*pos.xz/SC) );
-  float e = smoothstep(1.0-0.5*h,1.0-0.1*h,nor.y);
+float e = smoothstep(1.0-0.5*h,1.0-0.1*h,nor.y);
 float o = 0.3 + 0.7*smoothstep(0.0,0.1,nor.x+h*h);
-  float s = h*e*o;
-  col = mix( col, 0.29*vec3(0.62,0.65,0.7), smoothstep( 0.1, 0.9, s ) );
+float s = h*e*o;
+col = mix( col, 0.29*vec3(0.62,0.65,0.7), smoothstep( 0.1, 0.9, s ) );
   ```
-  
+
 
 ### 光照计算
 
